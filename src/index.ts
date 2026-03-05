@@ -11,8 +11,9 @@ const Reply = z.object({
       screen_name: z.string(),
     }),
     media: z.object({
-      photos: z
+      all: z
         .object({
+          type: z.string(),
           url: z.string(),
         })
         .array(),
@@ -45,11 +46,16 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
       },
     ];
 
-    if (reply.tweet.media.photos.length > 0) {
+    const all = reply.tweet.media.all ?? [];
+    const almostAll = all.filter((m) =>
+      ["photo", "video", "gif"].includes(m.type),
+    );
+
+    if (almostAll && almostAll.length > 0) {
       await ctx.replyWithMediaGroup(
-        reply.tweet.media.photos.map((photo, i) => ({
-          type: "photo",
-          media: photo.url,
+        almostAll.map((media, i) => ({
+          type: media.type == "photo" ? "photo" : "video",
+          media: media.url,
           ...(i == 0 ? { caption: text, caption_entities: entities } : {}),
         })),
       );
