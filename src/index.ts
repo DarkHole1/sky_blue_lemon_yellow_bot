@@ -32,6 +32,7 @@ bot.command("start", async (ctx) => {
 bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
   try {
     const url = ctx.match[0].replace("x.com", "api.fxtwitter.com");
+    const previewUrl = ctx.match[0].replace("x.com", "fixupx.com");
     const res = await fetch(url);
     const data = await res.json();
     const reply = Reply.parse(data);
@@ -50,6 +51,11 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
     const almostAll = all.filter((m) =>
       ["photo", "video", "gif"].includes(m.type),
     );
+
+    if (almostAll.some((m) => m.type == "gif") && almostAll.length > 1) {
+      await ctx.reply("Gifs albums aren't supported");
+      return;
+    }
 
     if (almostAll && almostAll.length > 0) {
       await ctx.replyWithMediaGroup(
