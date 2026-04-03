@@ -1,7 +1,7 @@
 import process from "node:process";
 import { Bot } from "grammy";
 import z from "zod";
-import { MessageEntity } from "grammy/types";
+import { InputFile, MessageEntity } from "grammy/types";
 
 const Reply = z.object({
   tweet: z.object({
@@ -61,7 +61,7 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
       await ctx.replyWithMediaGroup(
         almostAll.map((media, i) => ({
           type: media.type == "photo" ? "photo" : "video",
-          media: media.url,
+          media: new InputFile({ url: media.url }),
           ...(i == 0 ? { caption: text, caption_entities: entities } : {}),
         })),
       );
