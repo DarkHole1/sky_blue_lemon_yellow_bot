@@ -58,6 +58,7 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
     }
 
     if (almostAll && almostAll.length > 0) {
+      await ctx.replyWithChatAction(almostAll[0]?.type == "photo" ? "upload_photo" : "upload_video")
       await ctx.replyWithMediaGroup(
         almostAll.map((media, i) => ({
           type: media.type == "photo" ? "photo" : "video",
