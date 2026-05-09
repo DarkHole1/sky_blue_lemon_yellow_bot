@@ -2,6 +2,7 @@ import process from "node:process";
 import { Bot } from "grammy";
 import z from "zod";
 import { InputFile, MessageEntity } from "grammy/types";
+import { SocksProxyAgent } from "socks-proxy-agent";
 
 const Reply = z.object({
   tweet: z.object({
@@ -21,7 +22,17 @@ const Reply = z.object({
   }),
 });
 
-const bot = new Bot(process.env.TOKEN ?? "");
+let bot: Bot = new Bot(process.env.TOKEN ?? "");
+if (process.env.HTTP_PROXY) {
+  bot = new Bot(process.env.TOKEN ?? "", {
+    client: {
+      baseFetchConfig: {
+        agent: new SocksProxyAgent(process.env.HTTP_PROXY),
+        compres: true,
+      },
+    },
+  });
+}
 
 bot.command("start", async (ctx) => {
   await ctx.reply(
@@ -58,7 +69,9 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
     }
 
     if (almostAll && almostAll.length > 0) {
-      await ctx.replyWithChatAction(almostAll[0]?.type == "photo" ? "upload_photo" : "upload_video")
+      await ctx.replyWithChatAction(
+        almostAll[0]?.type == "photo" ? "upload_photo" : "upload_video",
+      );
       await ctx.replyWithMediaGroup(
         almostAll.map((media, i) => ({
           type: media.type == "photo" ? "photo" : "video",
