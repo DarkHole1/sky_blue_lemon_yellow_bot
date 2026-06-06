@@ -3,6 +3,7 @@ import { Bot } from "grammy";
 import z from "zod";
 import { InputFile, MessageEntity } from "grammy/types";
 import { SocksProxyAgent } from "socks-proxy-agent";
+import fetch from "node-fetch";
 
 const Reply = z.object({
   tweet: z.object({
@@ -22,16 +23,44 @@ const Reply = z.object({
   }),
 });
 
+let fetchFile = async function* (url: string | URL): AsyncIterable<Uint8Array> {
+  const { body } = await fetch(url);
+  for await (const chunk of body) {
+    if (typeof chunk === "string") {
+      throw new Error(
+        `Could not transfer file, received string data instead of bytes from '${url}'`,
+      );
+    }
+    yield chunk;
+  }
+};
+
 let bot: Bot = new Bot(process.env.TOKEN ?? "");
 if (process.env.HTTP_PROXY) {
+  const proxy_url = process.env.HTTP_PROXY;
   bot = new Bot(process.env.TOKEN ?? "", {
     client: {
       baseFetchConfig: {
-        agent: new SocksProxyAgent(process.env.HTTP_PROXY),
-        compres: true,
+        agent: new SocksProxyAgent(proxy_url),
+        compress: true,
       },
     },
   });
+
+  fetchFile = async function* (url: string | URL): AsyncIterable<Uint8Array> {
+    const { body } = await fetch(url, {
+      agent: new SocksProxyAgent(proxy_url),
+      compress: true,
+    });
+    for await (const chunk of body) {
+      if (typeof chunk === "string") {
+        throw new Error(
+          `Could not transfer file, received string data instead of bytes from '${url}'`,
+        );
+      }
+      yield chunk;
+    }
+  };
 }
 
 bot.command("start", async (ctx) => {
