@@ -25,7 +25,7 @@ const Reply = z.object({
 
 let fetchFile = async function* (url: string | URL): AsyncIterable<Uint8Array> {
   const { body } = await fetch(url);
-  for await (const chunk of body) {
+  for await (const chunk of body!) {
     if (typeof chunk === "string") {
       throw new Error(
         `Could not transfer file, received string data instead of bytes from '${url}'`,
@@ -52,7 +52,7 @@ if (process.env.HTTP_PROXY) {
       agent: new SocksProxyAgent(proxy_url),
       compress: true,
     });
-    for await (const chunk of body) {
+    for await (const chunk of body!) {
       if (typeof chunk === "string") {
         throw new Error(
           `Could not transfer file, received string data instead of bytes from '${url}'`,
