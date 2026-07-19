@@ -5,22 +5,29 @@ import { InputFile, MessageEntity } from "grammy/types";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import fetch from "node-fetch";
 
-const Reply = z.object({
-  tweet: z.object({
-    text: z.string(),
-    author: z.object({
-      name: z.string(),
-      screen_name: z.string(),
-    }),
-    media: z.object({
-      all: z
-        .object({
-          type: z.string(),
-          url: z.string(),
-        })
-        .array(),
-    }),
+const Tweet = z.object({
+  url: z.string(),
+  text: z.string(),
+  author: z.object({
+    name: z.string(),
+    screen_name: z.string(),
   }),
+  media: z.object({
+    all: z
+      .object({
+        type: z.string(),
+        url: z.string(),
+      })
+      .array(),
+  }).optional(),
+  get quote() {
+    return Tweet.optional();
+  },
+});
+type Tweet = z.infer<typeof Tweet>;
+
+const Reply = z.object({
+  tweet: Tweet,
 });
 
 let fetchFile = async function* (url: string | URL): AsyncIterable<Uint8Array> {
@@ -69,6 +76,26 @@ bot.command("start", async (ctx) => {
   );
 });
 
+type Formatted = {
+  text: string;
+  entities: MessageEntity[];
+};
+
+const formatTweet = (tweet: Tweet): Formatted => {
+  const text = `${tweet.text}\n\n🔗 ${tweet.author.name} (@${tweet.author.screen_name})`;
+  const startOffset = text.indexOf("🔗");
+  const entities: MessageEntity[] = [
+    {
+      type: "text_link",
+      offset: startOffset,
+      length: text.length - startOffset,
+      url: tweet.url,
+    },
+  ];
+
+  return { text, entities };
+};
+
 bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
   try {
     const url = ctx.match[0].replace("x.com", "api.fxtwitter.com");
@@ -76,18 +103,31 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
     const res = await fetch(url);
     const data = await res.json();
     const reply = Reply.parse(data);
-    const text = `${reply.tweet.text}\n\n🔗 ${reply.tweet.author.name} (@${reply.tweet.author.screen_name})`;
-    const startOffset = text.indexOf("🔗");
-    const entities: MessageEntity[] = [
-      {
-        type: "text_link",
-        offset: startOffset,
-        length: text.length - startOffset,
-        url: ctx.match[0],
-      },
-    ];
+    let formatted = formatTweet(reply.tweet);
+    if (reply.tweet.quote) {
+      const formattedQuote = formatTweet(reply.tweet.quote);
+      const text = `${formatted.text}\n\n${formattedQuote.text}`;
+      formatted = {
+        text,
+        entities: formatted.entities
+          .concat([
+            {
+              type: "blockquote",
+              offset: formatted.text.length + 2,
+              length: text.length - formatted.text.length - 2,
+            },
+          ])
+          .concat(
+            formattedQuote.entities.map((e) =>
+              Object.assign({}, e, {
+                offset: e.offset + formatted.text.length + 2,
+              }),
+            ),
+          ),
+      };
+    }
 
-    const all = reply.tweet.media.all ?? [];
+    const all = reply.tweet.media?.all ?? [];
     const almostAll = all.filter((m) =>
       ["photo", "video", "gif"].includes(m.type),
     );
@@ -105,12 +145,14 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
         almostAll.map((media, i) => ({
           type: media.type == "photo" ? "photo" : "video",
           media: new InputFile(fetchFile(media.url)),
-          ...(i == 0 ? { caption: text, caption_entities: entities } : {}),
+          ...(i == 0
+            ? { caption: formatted.text, caption_entities: formatted.entities }
+            : {}),
         })),
       );
     } else {
-      await ctx.reply(text, {
-        entities,
+      await ctx.reply(formatted.text, {
+        entities: formatted.entities,
       });
     }
   } catch (e) {
