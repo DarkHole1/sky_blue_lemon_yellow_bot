@@ -1,7 +1,13 @@
 import process from "node:process";
 import { Bot } from "grammy";
 import z from "zod";
-import { InputFile, MessageEntity } from "grammy/types";
+import {
+  InputFile,
+  MessageEntity,
+  RichBlock,
+  RichText,
+  InputRichBlock,
+} from "grammy/types";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import fetch from "node-fetch";
 
@@ -12,14 +18,16 @@ const Tweet = z.object({
     name: z.string(),
     screen_name: z.string(),
   }),
-  media: z.object({
-    all: z
-      .object({
-        type: z.string(),
-        url: z.string(),
-      })
-      .array(),
-  }).optional(),
+  media: z
+    .object({
+      all: z
+        .object({
+          type: z.string(),
+          url: z.string(),
+        })
+        .array(),
+    })
+    .optional(),
   get quote() {
     return Tweet.optional();
   },
@@ -81,19 +89,68 @@ type Formatted = {
   entities: MessageEntity[];
 };
 
-const formatTweet = (tweet: Tweet): Formatted => {
-  const text = `${tweet.text}\n\n🔗 ${tweet.author.name} (@${tweet.author.screen_name})`;
-  const startOffset = text.indexOf("🔗");
-  const entities: MessageEntity[] = [
+const richToFormatted = (
+  text: RichText,
+  offset: number = 0,
+): [Formatted, number] => {
+  if (typeof text == "string") {
+    return [{ text, entities: [] }, text.length];
+  }
+  if (Array.isArray(text)) {
+    let currentLength = 0;
+    let currentText = "";
+    let entities: MessageEntity[] = [];
+    for (const textPart of text) {
+      const [formatted, length] = richToFormatted(
+        textPart,
+        offset + currentLength,
+      );
+      currentText += formatted.text;
+      entities = entities.concat(formatted.entities);
+      currentLength += length;
+    }
+    return [{ text: currentText, entities }, currentLength];
+  }
+  if (text.type == "url") {
+    const [formatted, length] = richToFormatted(text.text, offset);
+    return [
+      {
+        text: formatted.text,
+        entities: formatted.entities.concat([
+          {
+            type: "text_link",
+            url: text.url,
+            offset: offset,
+            length: length,
+          },
+        ]),
+      },
+      length,
+    ];
+  }
+  throw Error("Not implemented");
+};
+
+const formatTweet = (tweet: Tweet): [Formatted, InputRichBlock[]] => {
+  const richText: RichText = [
+    tweet.text,
+    "\n\n",
     {
-      type: "text_link",
-      offset: startOffset,
-      length: text.length - startOffset,
+      type: "url",
       url: tweet.url,
+      text: `🔗 ${tweet.author.name} (@${tweet.author.screen_name})`,
     },
   ];
 
-  return { text, entities };
+  return [
+    richToFormatted(richText)[0],
+    [
+      {
+        type: "paragraph",
+        text: richText,
+      },
+    ],
+  ];
 };
 
 bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
@@ -103,9 +160,9 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
     const res = await fetch(url);
     const data = await res.json();
     const reply = Reply.parse(data);
-    let formatted = formatTweet(reply.tweet);
+    let [formatted, riched] = formatTweet(reply.tweet);
     if (reply.tweet.quote) {
-      const formattedQuote = formatTweet(reply.tweet.quote);
+      const [formattedQuote, richedQuote] = formatTweet(reply.tweet.quote);
       const text = `${formatted.text}\n\n${formattedQuote.text}`;
       formatted = {
         text,
@@ -125,6 +182,7 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
             ),
           ),
       };
+      riched = riched.concat(richedQuote);
     }
 
     const all = reply.tweet.media?.all ?? [];
@@ -141,24 +199,57 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
       await ctx.replyWithChatAction(
         almostAll[0]?.type == "photo" ? "upload_photo" : "upload_video",
       );
-      await ctx.replyWithMediaGroup(
-        almostAll.map((media, i) => ({
-          type: media.type == "photo" ? "photo" : "video",
-          media: new InputFile(fetchFile(media.url)),
-          ...(i == 0
-            ? { caption: formatted.text, caption_entities: formatted.entities }
-            : {}),
-        })),
-      );
+      if (formatted.text.length > 1024) {
+        const collage: InputRichBlock[] = almostAll.map(
+          (media, i): InputRichBlock =>
+            media.type == "photo"
+              ? {
+                  type: "photo",
+                  photo: {
+                    type: "photo",
+                    media: new InputFile(fetchFile(media.url)),
+                  },
+                }
+              : {
+                  type: "video",
+                  video: {
+                    type: "video",
+                    media: new InputFile(fetchFile(media.url)),
+                  },
+                },
+        );
+        ctx.replyWithRichMessage({
+          blocks: riched.concat(collage),
+        });
+      } else {
+        await ctx.replyWithMediaGroup(
+          almostAll.map((media, i) => ({
+            type: media.type == "photo" ? "photo" : "video",
+            media: new InputFile(fetchFile(media.url)),
+            ...(i == 0
+              ? {
+                  caption: formatted.text,
+                  caption_entities: formatted.entities,
+                }
+              : {}),
+          })),
+        );
+      }
     } else {
-      await ctx.reply(formatted.text, {
-        entities: formatted.entities,
-      });
+      if (formatted.text.length > 4096) {
+        ctx.replyWithRichMessage({
+          blocks: riched,
+        });
+      } else {
+        await ctx.reply(formatted.text, {
+          entities: formatted.entities,
+        });
+      }
     }
   } catch (e) {
     console.log(e);
     await ctx.reply(
-      "Something went wrong. Write @darkhole1 for info with link.",
+      "Something went wrong. Write to @darkhole1 for info with link.",
     );
   }
 });
