@@ -4,7 +4,6 @@ import z from "zod";
 import {
   InputFile,
   MessageEntity,
-  RichBlock,
   RichText,
   InputRichBlock,
 } from "grammy/types";
@@ -182,7 +181,10 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
             ),
           ),
       };
-      riched = riched.concat(richedQuote);
+      riched = riched.concat({
+        type: "blockquote",
+        blocks: richedQuote,
+      });
     }
 
     const all = reply.tweet.media?.all ?? [];
@@ -201,7 +203,7 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
       );
       if (formatted.text.length > 1024) {
         const collage: InputRichBlock[] = almostAll.map(
-          (media, i): InputRichBlock =>
+          (media): InputRichBlock =>
             media.type == "photo"
               ? {
                   type: "photo",
@@ -218,8 +220,13 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
                   },
                 },
         );
-        ctx.replyWithRichMessage({
-          blocks: riched.concat(collage),
+        await ctx.replyWithRichMessage({
+          blocks: riched.concat([
+            {
+              type: "collage",
+              blocks: collage,
+            },
+          ]),
         });
       } else {
         await ctx.replyWithMediaGroup(
@@ -237,7 +244,7 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
       }
     } else {
       if (formatted.text.length > 4096) {
-        ctx.replyWithRichMessage({
+        await ctx.replyWithRichMessage({
           blocks: riched,
         });
       } else {
