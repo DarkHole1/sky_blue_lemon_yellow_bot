@@ -8,7 +8,7 @@ import {
   InputRichBlock,
 } from "grammy/types";
 import { SocksProxyAgent } from "socks-proxy-agent";
-import fetch from "node-fetch";
+import fetch, { Response } from "node-fetch";
 
 const Tweet = z.object({
   url: z.string(),
@@ -37,9 +37,11 @@ const Reply = z.object({
   tweet: Tweet,
 });
 
-let fetchFile = async function* (url: string | URL): AsyncIterable<Uint8Array> {
-  const { body } = await fetch(url);
-  for await (const chunk of body!) {
+const streamBody = async function* (
+  body: NodeJS.ReadableStream,
+  url: string | URL,
+) {
+  for await (const chunk of body) {
     if (typeof chunk === "string") {
       throw new Error(
         `Could not transfer file, received string data instead of bytes from '${url}'`,
@@ -47,6 +49,10 @@ let fetchFile = async function* (url: string | URL): AsyncIterable<Uint8Array> {
     }
     yield chunk;
   }
+};
+
+let fetchProxy = async function (url: string | URL): Promise<Response> {
+  return fetch(url);
 };
 
 let bot: Bot = new Bot(process.env.TOKEN ?? "");
@@ -61,19 +67,11 @@ if (process.env.HTTP_PROXY) {
     },
   });
 
-  fetchFile = async function* (url: string | URL): AsyncIterable<Uint8Array> {
-    const { body } = await fetch(url, {
+  fetchProxy = async function (url: string | URL): Promise<Response> {
+    return fetch(url, {
       agent: new SocksProxyAgent(proxy_url),
       compress: true,
     });
-    for await (const chunk of body!) {
-      if (typeof chunk === "string") {
-        throw new Error(
-          `Could not transfer file, received string data instead of bytes from '${url}'`,
-        );
-      }
-      yield chunk;
-    }
   };
 }
 
@@ -201,22 +199,42 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
       await ctx.replyWithChatAction(
         almostAll[0]?.type == "photo" ? "upload_photo" : "upload_video",
       );
+      const fetchedMedia: {
+        type: "photo" | "video";
+        body: NodeJS.ReadableStream;
+        url: string;
+      }[] = [];
+      for (const media of almostAll) {
+        const res = await fetchProxy(media.url);
+        const type = media.type == "photo" ? "photo" : "video";
+        const maxSize =
+          media.type == "photo" ? 9 * 1024 * 1024 : 45 * 1024 * 1024;
+        if (Number(res.headers.get("Content-Length") ?? 0) > maxSize) {
+          await ctx.reply("One of files is too big for sending, sorry");
+          return;
+        }
+        fetchedMedia.push({
+          type,
+          body: res.body!,
+          url: media.url,
+        });
+      }
       if (formatted.text.length > 1024) {
-        const collage: InputRichBlock[] = almostAll.map(
+        const collage: InputRichBlock[] = fetchedMedia.map(
           (media): InputRichBlock =>
             media.type == "photo"
               ? {
                   type: "photo",
                   photo: {
                     type: "photo",
-                    media: new InputFile(fetchFile(media.url)),
+                    media: new InputFile(streamBody(media.body, media.url)),
                   },
                 }
               : {
                   type: "video",
                   video: {
                     type: "video",
-                    media: new InputFile(fetchFile(media.url)),
+                    media: new InputFile(streamBody(media.body, media.url)),
                   },
                 },
         );
@@ -230,9 +248,9 @@ bot.hears(/(?:https:\/\/)?x\.com\/[^\s]+\/status\/\d+/, async (ctx) => {
         });
       } else {
         await ctx.replyWithMediaGroup(
-          almostAll.map((media, i) => ({
-            type: media.type == "photo" ? "photo" : "video",
-            media: new InputFile(fetchFile(media.url)),
+          fetchedMedia.map((media, i) => ({
+            type: media.type,
+            media: new InputFile(streamBody(media.body, media.url)),
             ...(i == 0
               ? {
                   caption: formatted.text,
